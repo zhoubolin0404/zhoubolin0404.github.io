@@ -1,0 +1,83 @@
+name: Deploy latest IELTS Practice
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+  schedule:
+    # 每 6 小时检查并部署一次。
+    # GitHub 使用 UTC 时间，北京时间约为每天 05:17、11:17、17:17、23:17。
+    - cron: "17 */6 * * *"
+
+    # 每月创建一次自动活动记录，降低定时任务因长期无活动被停用的风险。
+    - cron: "43 2 1 * *"
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout deployment repository
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          path: control
+
+      - name: Download latest upstream opensource branch
+        uses: actions/checkout@v6
+        with:
+          repository: sallowayma-git/IELTS-practice
+          ref: ${{ vars.IELTS_SOURCE_REF || 'opensource' }}
+          path: site
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate and prepare website
+        shell: bash
+        run: |
+          test -f site/index.html
+          test -d site/css
+          test -d site/js
+          test -d site/assets
+          touch site/.nojekyll
+          printf 'User-agent: *\nDisallow: /\n' > site/robots.txt
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload website artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - name: Deploy website
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Keep scheduled workflow active
+        if: github.event_name == 'schedule' && github.event.schedule == '43 2 1 * *'
+        working-directory: control
+        shell: bash
+        run: |
+          date -u +"%Y-%m-%dT%H:%M:%SZ" > .automation-last-active
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .automation-last-active
+          git commit -m "chore: keep scheduled deployment active"
+          git push origin HEAD:main
